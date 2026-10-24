@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Pass me a note</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="sheet">
+    <h1>Pass me a note</h1>
+    <p class="lead">Answer one question at a time. After each one, I'll answer it too, and it all lands on WhatsApp.</p>
+
+    <div class="tabs" role="tablist">
+      <button role="tab" id="tab-answer" aria-selected="true" aria-controls="panel-answer">Answer my questions</button>
+      <button role="tab" id="tab-ask" aria-selected="false" aria-controls="panel-ask">Ask me yours</button>
+    </div>
+
+    <section class="panel" id="panel-answer" role="tabpanel" aria-labelledby="tab-answer">
+      <div class="stage" id="stage"></div>
+      <div class="status" id="a-status" role="status" aria-live="polite"></div>
+    </section>
+
+    <section class="panel" id="panel-ask" role="tabpanel" aria-labelledby="tab-ask" hidden>
+      <form id="ask-form" novalidate>
+        <div class="field"><label for="q-text">Your question</label><textarea id="q-text" rows="3" maxlength="1000" placeholder="Anything you like…"></textarea></div>
+        <div id="q-mood"></div>
+        <div class="who">
+          <div class="field"><label for="q-name">Your name</label><input type="text" id="q-name" maxlength="80" autocomplete="given-name"></div>
+          <div class="field"><label for="q-phone">Your WhatsApp number <span class="hint">(so I can reply)</span></label><input type="tel" id="q-phone" maxlength="24" autocomplete="tel" inputmode="tel" placeholder="+1 555 123 4567"></div>
+        </div>
+        <div class="trap" aria-hidden="true"><label>Website <input type="text" id="q-trap" tabindex="-1" autocomplete="off"></label></div>
+        <button class="send" type="submit">Send my question 💌</button>
+        <div class="status" id="q-status" role="status" aria-live="polite"></div>
+      </form>
+    </section>
+  </main>
+
+<script>
+const $ = (s) => document.querySelector(s);
+const reduced = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+const MOODS = [['😍', 'smitten'], ['🥰', 'happy'], ['😂', 'laughing'], ['😳', 'blushing'], ['🤔', 'thinking'], ['😋', 'hungry']];
+const REACTS = [['❤️', 'love it'], ['😂', 'funny'], ['😮', 'surprised'], ['🥹', 'touched'], ['🔥', 'hot']];
+
+// tiny element builder
+function h(tag, props = {}, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === 'class') el.className = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else if (v === true) el.setAttribute(k, '');
+    else if (v !== false && v != null) el.setAttribute(k, v);
+  }
+  el.append(...kids);
+  return el;
+}
+
+// emoji burst from the centre of an element
+function burst(emoji, from, count = 10) {
+  if (reduced) return;
+  const r = from.getBoundingClientRect();
+  const x = r.left + r.width / 2, y = r.top + r.height / 2;
+  for (let i = 0; i < count; i++) {
+    const s = h('span', { class: 'burst', 'aria-hidden': 'true' }, emoji);
+    s.style.left = x + 'px'; s.style.top = y + 'px';
+    document.body.append(s);
+    const a = Math.random() * Math.PI * 2, d = 60 + Math.random() * 100;
+    const dx = Math.cos(a) * d, dy = Math.sin(a) * d - 50;
+    const anim = s.animate(
+      [{ transform: 'translate(-50%,-50%) scale(.5)', opacity: 1 },
+       { transform: `translate(calc(-50% + ${dx}px), calc(-50% + ${dy}px)) scale(1.3)`, opacity: 0 }],
+      { duration: 900 + Math.random() * 500, easing: 'ease-out' });
+    anim.onfinish = () => s.remove();
+  }
+}
+
+// a row of emoji toggle buttons; one selected at a time
+function emojiRow(cls, caption, list, onPick) {
+  let value = '';
+  const row = h('div', { class: cls, role: 'group', 'aria-label': caption }, h('div', { class: 'cap' }, caption));
+  const btns = list.map(([emoji, label]) => {
+    const b = h('button', { type: 'button', 'aria-label': label, 'aria-pressed': 'false' }, emoji);
+    b.addEventListener('click', () => {
+      value = value === emoji ? '' : emoji;
+      btns.forEach((x) => x.setAttribute('aria-pressed', String(x.textContent === value)));
+      if (value) burst(value, b, 7);
+      if (onPick) onPick(value, b);
+    });
+    return b;
+  });
+  row.append(...btns);
+  return { el: row, get: () => value, lock: () => btns.forEach((b) => (b.disabled = true)) };
+}
+
+function setStatus(el, msg, kind) { el.textContent = msg; el.className = 'status ' + (kind || ''); }
+async function post(url, data) {
+  const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(data) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || 'Something went wrong.');
+  return j;
+}
+
+// ---------- tabs ----------
+function showTab(which) {
+  for (const t of ['answer', 'ask']) {
+    $('#tab-' + t).setAttribute('aria-selected', String(t === which));
+    $('#panel-' + t).hidden = t !== which;
+  }
+}
+$('#tab-answer').onclick = () => showTab('answer');
+$('#tab-ask').onclick = () => showTab('ask');
+
+// ---------- answer flow ----------
+let meta = null;
+const state = { name: '', phone: '', trap: '', idx: 0, done: [], pending: null, sentToHer: false };
+const stage = $('#stage');
+const aStatus = $('#a-status');
+
+function show(...nodes) {
+  stage.replaceChildren(h('div', { class: 'step' }, ...nodes));
+  setStatus(aStatus, '');
+}
+
+function progress() {
+  const p = h('div', { class: 'progress', 'aria-hidden': 'true' });
+  meta.questions.forEach((_, i) =>
+    p.append(h('span', { class: state.done[i] ? 'done' : i === state.idx ? 'now' : '' }, state.done[i] ? '♥' : '♡')));
+  return p;
+}
+
+function renderStart() {
+  const name = h('input', { type: 'text', id: 's-name', maxlength: '80', autocomplete: 'given-name', placeholder: 'What should I call you?' });
+  const phone = h('input', { type: 'tel', id: 's-phone', maxlength: '24', autocomplete: 'tel', inputmode: 'tel', placeholder: '+1 555 123 4567' });
+  const trap = h('input', { type: 'text', tabindex: '-1', autocomplete: 'off' });
+  const go = h('button', { class: 'send', type: 'button' }, `Let's begin 💌`);
+  go.addEventListener('click', () => {
+    const d = phone.value.replace(/\D/g, '');
+    if (phone.value.trim() && (d.length < 8 || d.length > 15)) {
+      return setStatus(aStatus, 'Enter your WhatsApp number with country code, like +1 555 123 4567.', 'error');
+    }
+    Object.assign(state, { name: name.value.trim(), phone: phone.value.trim(), trap: trap.value, idx: 0, done: [], pending: null, sentToHer: false });
+    burst('💖', go, 12);
+    renderQuestion();
+  });
+  show(
+    h('span', { class: 'big-emoji', 'aria-hidden': 'true' }, '💌'),
+    h('h2', {}, `${meta.questions.length} little questions`),
+    h('p', { class: 'intro' }, `I'll answer each one right after you do.`),
+    h('div', { class: 'field' }, h('label', { for: 's-name' }, 'Your name'), name),
+    h('div', { class: 'field' }, h('label', { for: 's-phone' }, 'Your WhatsApp number ', h('span', { class: 'hint' }, `(optional, with country code)`)), phone),
+    h('div', { class: 'trap', 'aria-hidden': 'true' }, trap),
+    h('div', { class: 'actions' }, go)
+  );
+}
+
+function renderQuestion() {
+  const i = state.idx;
+  const q = meta.questions[i];
+  const last = i === meta.questions.length - 1;
+  const mood = emojiRow('mood', 'How are you feeling about this one?', MOODS);
+  const ta = h('textarea', { id: 'ans', rows: '3', maxlength: '1000', placeholder: 'Write it here…', 'aria-labelledby': 'qtitle' });
+  const title = h('h2', { id: 'qtitle', tabindex: '-1' }, q);
+  const send = h('button', { class: 'send', type: 'button' }, 'Send and see my answer 💌');
+  const skip = h('button', { class: 'ghost', type: 'button' }, 'Skip this one');
+  const actions = h('div', { class: 'actions' }, send, skip);
+  const reveal = h('div', { class: 'reveal' });
+
+  const advance = () => { state.idx++; state.idx < meta.questions.length ? renderQuestion() : renderFinish(); };
+  skip.addEventListener('click', advance);
+
+  send.addEventListener('click', async () => {
+    if (!ta.value.trim()) return setStatus(aStatus, 'Write your answer first.', 'error');
+    send.disabled = true; skip.disabled = true; setStatus(aStatus, 'Sending…');
+    try {
+      const res = await post('/api/answer', {
+        name: state.name, phone: state.phone, website: state.trap,
+        index: i, answer: ta.value, mood: mood.get(), prevReaction: state.pending,
+      });
+      state.pending = null;
+      state.done[i] = true;
+      if (res.whatsapp) state.sentToHer = true;
+      setStatus(aStatus, '');
+      ta.readOnly = true; mood.lock();
+      send.hidden = true; skip.hidden = true;
+
+      const react = emojiRow('react', 'How does my answer make you feel?', REACTS, (emoji) => {
+        state.pending = emoji ? { index: i, emoji } : null;
+      });
+      const next = h('button', { class: 'send', type: 'button' }, last ? 'Finish 💕' : 'Next question 💗');
+      next.addEventListener('click', advance);
+      const mine = h('p', { class: 'his' }, h('b', {}, meta.ownerName + ':'), ' ' + res.answer);
+      reveal.append(
+        mine, react.el,
+        h('p', { class: 'theirs' }, res.whatsapp ? 'I also sent you my answer on WhatsApp.' : ''),
+        h('div', { class: 'actions' }, next)
+      );
+      burst(mood.get() || '💗', send, 12);
+      mine.scrollIntoView({ behavior: reduced ? 'auto' : 'smooth', block: 'nearest' });
+    } catch (err) {
+      send.disabled = false; skip.disabled = false;
+      setStatus(aStatus, err.message, 'error');
+    }
+  });
+
+  show(progress(), h('p', { class: 'count' }, `Question ${i + 1} of ${meta.questions.length}`), title, mood.el, ta, actions, reveal);
+  title.focus({ preventScroll: true });
+}
+
+function renderFinish() {
+  const answered = state.done.filter(Boolean).length;
+  const note = h('textarea', { id: 'note', rows: '3', maxlength: '1000', placeholder: 'Anything you want to tell me…', 'aria-label': 'A note for me' });
+  const send = h('button', { class: 'send', type: 'button' }, 'Send my note 💕');
+  const title = h('h2', { tabindex: '-1' }, `That's every question${state.name ? ', ' + state.name : ''}!`);
+  send.addEventListener('click', async () => {
+    send.disabled = true; setStatus(aStatus, 'Sending…');
+    try {
+      await post('/api/finish', { name: state.name, phone: state.phone, reaction: state.pending, message: note.value, answered });
+      state.pending = null;
+      burst('💖', send, 16); setTimeout(() => burst('✨', send, 16), 250); setTimeout(() => burst('🌹', send, 14), 500);
+      show(
+        h('span', { class: 'big-emoji', 'aria-hidden': 'true' }, '💞'),
+        h('h2', { tabindex: '-1', id: 'done' }, 'Thank you for playing'),
+        h('p', { class: 'intro' }, state.sentToHer ? 'My answers are in your WhatsApp.' : 'I loved reading every answer.'),
+        h('div', { class: 'actions' },
+          h('button', { class: 'send', type: 'button', onclick: () => showTab('ask') }, 'Ask me something 💬'))
+      );
+      $('#done').focus({ preventScroll: true });
+    } catch (err) {
+      send.disabled = false; setStatus(aStatus, err.message, 'error');
+    }
+  });
+  show(
+    h('span', { class: 'big-emoji', 'aria-hidden': 'true' }, '🎉'),
+    title,
+    h('p', { class: 'intro' }, `You answered ${answered} of ${meta.questions.length}. Want to leave me a note?`),
+    note,
+    h('div', { class: 'actions' }, send)
+  );
+  title.focus({ preventScroll: true });
+  burst('🎉', title, 14);
+}
+
+async function init() {
+  try {
+    const response = await fetch('/api/questions', { cache: 'no-store' });
+    meta = await response.json();
+    if (!response.ok) throw new Error(meta.error || 'Could not load the questions.');
+    document.title = 'Notes with ' + meta.ownerName;
+    if (!meta.open) {
+      document.querySelector('.tabs').hidden = true;
+      document.querySelectorAll('.panel').forEach((panel) => { panel.hidden = true; });
+      $('#panel-answer').hidden = false;
+      show(
+        h('span', { class: 'big-emoji', 'aria-hidden': 'true' }, '💌'),
+        h('h2', {}, 'The portal is closed'),
+        h('p', { class: 'intro' }, 'Please come back another time.')
+      );
+      return;
+    }
+    renderStart();
+  } catch (e) {
+    setStatus(aStatus, e.message || 'Could not load the questions. Refresh the page.', 'error');
+  }
+}
+
+// ---------- ask form ----------
+const askMood = emojiRow('mood', 'What mood is this question in?', MOODS);
+$('#q-mood').append(askMood.el);
+
+$('#ask-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('.send');
+  const status = $('#q-status');
+  if (!$('#q-text').value.trim()) return setStatus(status, 'Write your question first.', 'error');
+  btn.disabled = true; setStatus(status, 'Sending…');
+  try {
+    await post('/api/ask', {
+      question: $('#q-text').value, name: $('#q-name').value, phone: $('#q-phone').value,
+      mood: askMood.get(), website: $('#q-trap').value,
+    });
+    burst(askMood.get() || '💌', btn, 12);
+    $('#q-text').value = '';
+    setStatus(status, $('#q-phone').value ? 'Sent. I will reply on WhatsApp.' : 'Sent. Add your WhatsApp number next time so I can reply.', 'ok');
+  } catch (err) {
+    setStatus(status, err.message, 'error');
+  }
+  btn.disabled = false;
+});
+
+init();
+</script>
+<script src="/hearts.js"></script>
+</body>
+</html>

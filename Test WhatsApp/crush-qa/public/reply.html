@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Reply</title>
+  <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="sheet">
+    <h1>Write back</h1>
+    <p class="lead" id="from">Answer her question. It goes straight to her WhatsApp.</p>
+    <form id="f" novalidate>
+      <div class="field"><label for="question">Her question</label><textarea id="question" rows="3" readonly></textarea></div>
+      <div class="field"><label for="reply">Your answer</label><textarea id="reply" rows="4" maxlength="3000"></textarea></div>
+      <div class="who">
+        <div class="field"><label for="to">Her WhatsApp number</label><input type="tel" id="to" inputmode="tel" placeholder="+1 555 123 4567"></div>
+        <div class="field"><label for="pw">Your password</label><input type="password" id="pw" autocomplete="current-password"></div>
+      </div>
+      <div class="actions"><button class="send" type="submit">Send my answer 💬</button><button class="ghost" type="button" id="wa">Open in WhatsApp instead</button></div>
+      <div class="status" id="status" role="status" aria-live="polite"></div>
+    </form>
+  </main>
+<script>
+const $ = (s) => document.querySelector(s);
+const p = new URLSearchParams(location.search);
+$('#question').value = p.get('q') || '';
+$('#to').value = p.get('to') || '';
+if (p.get('name')) $('#from').textContent = p.get('name') + ' asked you this. Your answer goes straight to her WhatsApp.';
+
+function waLink() {
+  const num = $('#to').value.replace(/\D/g, '');
+  const text = 'Re: "' + $('#question').value + '"\n\n' + $('#reply').value;
+  return 'https://wa.me/' + num + '?text=' + encodeURIComponent(text);
+}
+function check(st) {
+  if ($('#to').value.replace(/\D/g, '').length < 8) { st.className = 'status error'; st.textContent = 'Add her WhatsApp number with country code.'; return false; }
+  if (!$('#reply').value.trim()) { st.className = 'status error'; st.textContent = 'Write your answer first.'; return false; }
+  return true;
+}
+$('#wa').addEventListener('click', () => { if (check($('#status'))) window.open(waLink(), '_blank'); });
+
+$('#f').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const btn = e.target.querySelector('.send'), st = $('#status');
+  if (!check(st)) return;
+  btn.disabled = true; st.className = 'status'; st.textContent = 'Sending…';
+  try {
+    const r = await fetch('/api/reply', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: $('#pw').value, to: $('#to').value, question: $('#question').value, reply: $('#reply').value }),
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.error || 'Something went wrong.');
+    if (j.manual) {
+      st.className = 'status ok';
+      st.textContent = 'WhatsApp is opening. Tap send there.';
+      window.open(waLink(), '_blank');
+    } else {
+      st.className = 'status ok'; st.textContent = 'Sent to her WhatsApp.'; $('#reply').value = '';
+    }
+  } catch (err) {
+    st.className = 'status error'; st.textContent = err.message;
+  }
+  btn.disabled = false;
+});
+</script>
+<script src="/hearts.js"></script>
+</body>
+</html>

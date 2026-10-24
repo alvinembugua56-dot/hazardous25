@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Portal admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Great+Vibes&family=Cormorant+Garamond:ital,wght@0,500;0,600;0,700;1,500;1,600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="sheet">
+    <h1>Portal admin</h1>
+    <p class="lead">Control whether visitors can use the portal.</p>
+    <p id="portal-state" class="status" role="status" aria-live="polite">Checking portal status…</p>
+    <form id="admin-form" novalidate>
+      <div class="field">
+        <label for="password">Admin password</label>
+        <input type="password" id="password" autocomplete="current-password" required>
+      </div>
+      <div class="actions">
+        <button class="send" id="toggle" type="submit" disabled>Loading…</button>
+      </div>
+      <div class="status" id="result" role="status" aria-live="polite"></div>
+    </form>
+  </main>
+<script>
+const $ = (selector) => document.querySelector(selector);
+const state = $('#portal-state');
+const result = $('#result');
+const button = $('#toggle');
+let isOpen = null;
+
+function setResult(message, kind) {
+  result.textContent = message;
+  result.className = 'status ' + (kind || '');
+}
+
+function render() {
+  state.textContent = isOpen ? 'The portal is open to visitors.' : 'The portal is closed to visitors.';
+  state.className = 'status ' + (isOpen ? 'ok' : 'error');
+  button.textContent = isOpen ? 'Close portal' : 'Open portal';
+  button.disabled = false;
+}
+
+async function loadState() {
+  try {
+    const response = await fetch('/api/portal', { cache: 'no-store' });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not load portal status.');
+    isOpen = data.open;
+    render();
+  } catch (error) {
+    state.textContent = error.message;
+    state.className = 'status error';
+    button.disabled = true;
+    button.textContent = 'Unavailable';
+  }
+}
+
+$('#admin-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (isOpen === null) return;
+  button.disabled = true;
+  setResult('Updating…');
+  try {
+    const response = await fetch('/api/portal', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: $('#password').value, open: !isOpen }),
+    });
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.error || 'Could not update the portal.');
+    isOpen = data.open;
+    $('#password').value = '';
+    render();
+    setResult('Portal updated.', 'ok');
+  } catch (error) {
+    setResult(error.message, 'error');
+    button.disabled = false;
+  }
+});
+
+loadState();
+</script>
+</body>
+</html>
